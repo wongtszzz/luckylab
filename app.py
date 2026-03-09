@@ -1,90 +1,109 @@
 import streamlit as st
 import numpy as np
-import matplotlib.pyplot as plt
 from scipy.stats import norm
 import yfinance as yf
 
 # --- Page Config ---
-st.set_page_config(page_title="Short Put Pro", layout="wide")
+st.set_page_config(page_title="Short Put Strategy Lab", layout="wide")
 
-st.title("📈 Short Put Analyzer (Live Data)")
+st.title("🛡️ Short Put Strategy & Risk Lab")
+st.markdown("Focused on **Probability**, **Capital Efficiency**, and **Risk Mitigation**.")
 
-# --- Sidebar: Live Market Data ---
-st.sidebar.header("1. Search Market")
-ticker_input = st.sidebar.text_input("Enter Ticker (e.g., TSLA, AAPL, SPY)", value="SPY").upper()
+# --- Sidebar: Market Data ---
+st.sidebar.header("1. Market Context")
+ticker_symbol = st.sidebar.text_input("Stock Ticker", value="SPY").upper()
 
-@st.cache_data(ttl=300) # Refreshes every 5 minutes
-def get_stock_data(symbol):
+@st.cache_data(ttl=300)
+def fetch_market_data(symbol):
     try:
-        ticker = yf.Ticker(symbol)
-        price = ticker.fast_info['last_price']
-        name = ticker.info.get('longName', symbol)
-        return price, name
+        t = yf.Ticker(symbol)
+        return t.fast_info['last_price'], t.info.get('longName', symbol)
     except:
-        return 100.0, "Unknown"
+        return 100.0, "Manual Entry"
 
-live_price, co_name = get_stock_data(ticker_input)
+live_price, co_name = fetch_market_data(ticker_symbol)
 st.sidebar.subheader(f"{co_name}")
-st.sidebar.write(f"Current Price: **${live_price:.2f}**")
 
-# --- Sidebar: Trade Inputs ---
-st.sidebar.header("2. Trade Parameters")
-S = st.sidebar.number_input("Underlying Price ($)", value=float(live_price))
+# --- Sidebar: Trade Parameters ---
+st.sidebar.header("2. Position Details")
+S = st.sidebar.number_input("Current Stock Price ($)", value=float(live_price))
 K = st.sidebar.number_input("Strike Price ($)", value=float(live_price * 0.95))
-premium = st.sidebar.number_input("Premium Received ($)", value=1.50)
-T_days = st.sidebar.number_input("Days to Expiry", value=30, min_value=1)
-iv_input = st.sidebar.slider("Implied Volatility (%)", 10.0, 150.0, 30.0)
+premium = st.sidebar.number_input("Premium per Share ($)", value=1.50)
+T_days = st.sidebar.number_input("Days to Expiration", value=30, min_value=1)
+iv = st.sidebar.slider("Implied Volatility (IV %)", 10.0, 150.0, 30.0) / 100
+r = 0.045 # 4.5% Risk Free Rate
 
-# --- Math Logic (Black-Scholes) ---
-r = 0.045 # 4.5% Risk-free rate
-sigma = iv_input / 100
+# --- Calculations ---
 T = T_days / 365.0
+# Standard deviation for the move (Expected Move)
+expected_move_std = S * iv * np.sqrt(T)
 
-d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-d2 = d1 - sigma * np.sqrt(T)
-
-# Greeks & Metrics
-prob_profit = norm.cdf(d2) * 100
+# Black-Scholes for Probability
+d2 = (np.log(S / K) + (r - 0.5 * iv**2) * T) / (iv * np.sqrt(T))
+prob_otm = norm.cdf(d2) * 100
 breakeven = K - premium
-delta = -(norm.cdf(d1) - 1)
-# Theta (Daily)
-theta = -((-(S * norm.pdf(d1) * sigma) / (2 * np.sqrt(T)) + r * K * np.exp(-r * T) * norm.cdf(-d2)) / 365)
 
-# --- Dashboard Layout ---
+# Margin & Returns
+capital_required = K * 100 # Cash Secured Requirement
+net_profit = premium * 100
+raw_return = (net_profit / (capital_required - net_profit)) * 100
+annualized_return = raw_return * (365 / T_days)
+
+# --- UI: Top Level Metrics ---
 st.divider()
-m1, m2, m3, m4 = st.columns(4)
-m1.metric("Prob. of Profit", f"{prob_profit:.1f}%")
-m2.metric("Breakeven", f"${breakeven:.2f}")
-m3.metric("Delta", f"{delta:.3f}")
-m4.metric("Daily Theta (Decay)", f"${theta*100:.2f}")
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Prob. of Max Profit", f"{prob_otm:.1f}%")
+c2.metric("Breakeven Price", f"${breakeven:.2f}")
+c3.metric("Return on Capital", f"{raw_return:.2f}%")
+c4.metric("Annualized Return", f"{annualized_return:.1f}%")
 
-# --- Risk Table ---
-st.subheader("What if the stock moves tomorrow?")
-st.write("Estimated P&L based on price swings:")
-shocks = [-10, -5, -2, 0, 2, 5, 10]
-cols = st.columns(len(shocks))
-
-for i, s in enumerate(shocks):
-    price_change = S * (1 + s/100)
-    pnl = (price_change - S) * delta * 100 # Multiplied by 100 for 1 contract
-    color = "inverse" if pnl < 0 else "normal"
-    cols[i].metric(f"{s}% Move", f"${price_change:.1f}", f"${pnl:.0f}", delta_color=color)
-
-# --- Payoff Chart ---
+# --- UI: Probability & Risk Analysis ---
 st.divider()
-x = np.linspace(S * 0.8, S * 1.2, 100)
-y = [ (premium - max(0, K - val)) * 100 for val in x]
+left_col, right_col = st.columns(2)
 
-fig, ax = plt.subplots(figsize=(10, 4))
-ax.plot(x, y, color='#00FF00', linewidth=2)
-ax.axhline(0, color='white', alpha=0.3)
-ax.axvline(S, color='yellow', linestyle='--', label='Current Price')
-ax.fill_between(x, y, 0, where=(np.array(y) > 0), facecolor='green', alpha=0.2)
-ax.fill_between(x, y, 0, where=(np.array(y) < 0), facecolor='red', alpha=0.2)
+with left_col:
+    st.subheader("🎯 Probability Analysis")
+    st.write("Where is the stock likely to be at expiration?")
+    
+    # Probability of touching various levels
+    p_hit_strike = (1 - norm.cdf(d2)) * 100 # Simple estimate
+    p_below_be = (1 - norm.cdf((np.log(S / breakeven) + (r - 0.5 * iv**2) * T) / (iv * np.sqrt(T)))) * 100
+    
+    st.write(f"• Probability of Stock < Strike (${K}): **{p_hit_strike:.1f}%**")
+    st.write(f"• Probability of Loss (Stock < ${breakeven:.2f}): **{p_below_be:.1f}%**")
+    st.write(f"• Expected Move (+/-): **${expected_move_std:.2f}**")
 
-ax.set_facecolor('#0E1117')
-fig.patch.set_facecolor('#0E1117')
-ax.tick_params(colors='white')
-ax.set_xlabel("Stock Price at Expiration", color='white')
-ax.set_ylabel("Profit / Loss ($)", color='white')
-st.pyplot(fig)
+with right_col:
+    st.subheader("💰 Capital & Margin")
+    st.write("How much 'buying power' is at stake?")
+    st.write(f"• Cash-Secured Requirement: **${capital_required:,.2f}**")
+    st.write(f"• Net Premium Collected: **${net_profit:,.2f}**")
+    
+    # Danger Warning
+    if p_hit_strike > 40:
+        st.warning("⚠️ High Risk: Over 40% chance of assignment.")
+    elif p_hit_strike < 15:
+        st.success("✅ Conservative: High probability of keeping premium.")
+    else:
+        st.info("ℹ️ Moderate: Standard income-generation setup.")
+
+# --- Price Shock Simulator ---
+st.divider()
+st.subheader("📉 The 'Crash' Simulator")
+st.write("What happens to your account if the stock drops *instantly* tomorrow?")
+
+shocks = [-2, -5, -10, -15, -20]
+shock_rows = []
+for s in shocks:
+    new_price = S * (1 + s/100)
+    # Estimate loss if assigned at new price
+    loss_at_exp = (breakeven - new_price) * 100 if new_price < breakeven else 0
+    shock_rows.append({
+        "Price Drop": f"{s}%",
+        "New Stock Price": f"${new_price:.2f}",
+        "P&L at Expiration": f"-${abs(loss_at_exp):,.2f}" if loss_at_exp < 0 else "Still Profitable"
+    })
+
+st.table(shock_rows)
+
+st.caption("Note: P&L at Expiration assumes you hold the position until the end and are assigned at the strike.")
