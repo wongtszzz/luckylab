@@ -70,16 +70,13 @@ with tab1:
             except Exception as e:
                 st.error(f"Scanner Error: {e}")
 
-# --- TAB 2: LUCKY LEDGER (Optimized for Pure Calc) ---
+# --- TAB 2: LUCKY LEDGER (Manual Calc) ---
 with tab2:
     st.subheader("📓 Trade Ledger")
     
-    # Updated Metric Label with Emoji on the left and Refresh Timestamp
+    # Updated Metric Label with Emoji on the RIGHT
     total_net = pd.to_numeric(st.session_state.journal_data["Total Premium Collected"], errors='coerce').fillna(0).sum()
-    
-    m1, m2 = st.columns([1, 1])
-    m1.metric("🤑 **Total Premium Collected**", f"${total_net:,.2f}")
-    m2.caption(f"Last Refreshed: {st.session_state.last_refresh}")
+    st.metric("**Total Premium Collected** 🤑", f"${total_net:,.2f}")
 
     with st.expander("➕ Log New Trade", expanded=True):
         l1, l2, l3, l4 = st.columns(4)
@@ -96,7 +93,6 @@ with tab2:
             if strike is None or price_per_share is None:
                 st.error("Please enter both Strike and Price per Share.")
             else:
-                # Math Engine
                 cash_premium = round(float(price_per_share) * 100, 2)
                 comm = max(1.05, 0.70 * qty)
                 net_total = (cash_premium * qty) - comm
@@ -115,18 +111,22 @@ with tab2:
     st.write("### History")
     st.session_state.journal_data = st.data_editor(st.session_state.journal_data, num_rows="dynamic", use_container_width=True)
 
-    # REFRESH BUTTON
-    if st.button("🔄 Refresh & Recalculate"):
-        df = st.session_state.journal_data.copy()
-        df["Premium (Total)"] = pd.to_numeric(df["Premium (Total)"], errors='coerce').fillna(0)
-        df["Qty"] = pd.to_numeric(df["Qty"], errors='coerce').fillna(1)
-        
-        df["Total Premium Collected"] = df.apply(
-            lambda row: round((row["Premium (Total)"] * row["Qty"]) - max(1.05, 0.70 * row["Qty"]), 2), 
-            axis=1
-        )
-        
-        st.session_state.journal_data = df
-        st.session_state.last_refresh = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        st.success("All calculations verified!")
-        st.rerun()
+    # REFRESH BUTTON & TIMESTAMP BOTTOM RIGHT
+    c_btn, c_time = st.columns([1, 1])
+    with c_btn:
+        if st.button("🔄 Refresh & Recalculate"):
+            df = st.session_state.journal_data.copy()
+            df["Premium (Total)"] = pd.to_numeric(df["Premium (Total)"], errors='coerce').fillna(0)
+            df["Qty"] = pd.to_numeric(df["Qty"], errors='coerce').fillna(1)
+            df["Total Premium Collected"] = df.apply(
+                lambda row: round((row["Premium (Total)"] * row["Qty"]) - max(1.05, 0.70 * row["Qty"]), 2), 
+                axis=1
+            )
+            st.session_state.journal_data = df
+            st.session_state.last_refresh = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            st.success("All calculations verified!")
+            st.rerun()
+    
+    with c_time:
+        # Aligning text to the bottom right
+        st.markdown(f"<p style='text-align: right; color: gray; padding-top: 15px;'>Last Refreshed: {st.session_state.last_refresh}</p>", unsafe_allow_html=True)
