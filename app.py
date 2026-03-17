@@ -30,7 +30,7 @@ except Exception as e:
     st.error("⚠️ Lucky Lab Keys Missing. Add ALPACA_KEY and ALPACA_SECRET to Streamlit Secrets.")
     st.stop()
 
-# --- 3. CREATE TABS (This prevents the NameError) ---
+# --- 3. CREATE TABS ---
 tab1, tab2 = st.tabs(["🔍 Strategy Optimizer", "📓 Lucky Ledger"])
 
 # --- TAB 1: STRATEGY OPTIMIZER ---
@@ -58,24 +58,4 @@ with tab1:
                 
                 results = []
                 for strike, data in chain.items():
-                    if data.type == 'put' and data.strike < current_price:
-                        iv = data.implied_volatility or 0.18
-                        t_years = max(days_to_fri, 1) / 365
-                        d2 = (np.log(current_price/data.strike) + (0.042 - 0.5*iv**2)*t_years) / (iv*np.sqrt(t_years))
-                        prob_otm = norm.cdf(d2) * 100
-                        
-                        if prob_otm >= safety_threshold and (data.volume or 0) >= min_vol:
-                            mid_price = (data.bid_price + data.ask_price) / 2
-                            m_req = max((0.20*current_price - (current_price-data.strike) + mid_price)*100, (0.10*data.strike)*100)
-                            ann_roc = (mid_price*100/m_req) * (365/days_to_fri) * 100
-                            results.append({
-                                "Strike": data.strike, "Safety %": round(prob_otm, 1),
-                                "Premium": f"${mid_price:.2f}", "Ann. ROC %": round(ann_roc, 1),
-                                "Volume": data.volume, "Margin Req": int(m_req)
-                            })
-                if results:
-                    st.dataframe(pd.DataFrame(results).sort_values("Ann. ROC %", ascending=False), use_container_width=True)
-                else:
-                    st.warning("No matches found. Try lower safety or volume.")
-            except Exception as e:
-                st.error(f"Lab Error: {e
+                    if data.type == 'put'
