@@ -11,14 +11,14 @@ from datetime import datetime, timedelta
 # --- 1. CONFIG & BRANDING ---
 st.set_page_config(page_title="Lucky Lab", page_icon="🧪", layout="wide")
 
-st.html("""
+st.markdown("""
     <style>
     .main { background-color: #f5f7f9; }
     .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; border: 1px solid #e1e4e8; }
     h1 { color: #1e3a8a; font-family: 'Helvetica Neue', sans-serif; }
     [data-testid="stExpander"] { background-color: #ffffff; border-radius: 10px; border: 1px solid #e1e4e8; }
     </style>
-""")
+""", unsafe_allow_html=True)
 
 st.title("🧪 Lucky Lab: Options Quant")
 
@@ -39,7 +39,6 @@ tab1, tab2 = st.tabs(["🔍 Strategy Optimizer", "📓 Lucky Ledger"])
 with tab1:
     st.subheader("Naked Put Scanner")
     col_a, col_b, col_c = st.columns([1, 1, 1])
-    # Auto-CAPS implementation
     ticker_scan_raw = col_a.text_input("Ticker Symbol", value="SPY", key="scan_ticker_input")
     ticker_scan = ticker_scan_raw.upper()
     
@@ -89,19 +88,18 @@ with tab2:
     st.subheader("📓 The Lucky Ledger")
 
     if 'journal_data' not in st.session_state:
-        st.session_state.journal_data = pd.DataFrame(columns=["Date", "Ticker", "Type", "Strike", "Expiry", "Premium", "Qty", "Total Credit"])
+        st.session_state.journal_data = pd.DataFrame(columns=["Ticker", "Type", "Strike", "Expiry", "Premium", "Qty", "Commission", "Total Profit"])
 
     # 1. TOP METRICS
     m1, m2 = st.columns(2)
-    overall_p = st.session_state.journal_data["Total Credit"].astype(float).sum() if not st.session_state.journal_data.empty else 0.0
-    m1.metric("Overall Profit", f"${overall_p:,.2f}")
+    overall_p = st.session_state.journal_data["Total Profit"].astype(float).sum() if not st.session_state.journal_data.empty else 0.0
+    m1.metric("Net Profit (After Fees)", f"${overall_p:,.2f}")
     m2.metric("Portfolio Status", "Online" if overall_p >= 0 else "Pending Recovery")
     st.divider()
 
     # 2. ENTRY FORM
     with st.expander("➕ Log New Trade", expanded=True):
         c1, c2, c3 = st.columns(3)
-        # Auto-CAPS via logic
         new_ticker_raw = c1.text_input("Ticker", value="SPY", key="ledger_ticker_input")
         new_ticker = new_ticker_raw.upper()
         
@@ -110,8 +108,6 @@ with tab2:
 
         c4, c5 = st.columns(2)
         expiry_date = c4.date_input("Expiry Date", value=datetime.now().date(), key="expiry_picker")
-        
-        # High precision 0.1 step and placeholder value
         target_strike = c5.number_input("Target Strike", value=None, step=0.1, format="%.1f", placeholder="Enter Strike...", key="strike_input")
         
         if st.button("🚀 Fetch & Commit", key="commit_btn"):
@@ -145,15 +141,33 @@ with tab2:
                             if p_val == 0: p_val = getattr(data, 'last_price', 0.05)
 
                     if p_val > 0:
+                        # --- IBKR TIERED PRICING FORMULA ---
+                        # Commission per contract based on premium
+                        if p_val >= 0.10:
+                            base_comm = 0.65
+                        elif p_val >= 0.05:
+                            base_comm = 0.50
+                        else:
+                            base_comm = 0.25
+                        
+                        # Pass-through fees (estimates for 2026)
+                        # OCC Clearing: $0.02, ORF: $0.02, FINRA TAF: $0.003
+                        third_party_fees = 0.045 
+                        
+                        total_comm_per_contract = base_comm + third_party_fees
+                        order_comm = max(1.00, total_comm_per_contract * qty)
+                        
+                        total_profit = (p_val * 100 * qty) - order_comm
+                        
                         new_row = {
-                            "Date": datetime.now().strftime("%Y-%m-%d"), 
                             "Ticker": new_ticker,
                             "Type": strategy, 
                             "Strike": round(target_strike, 1), 
                             "Expiry": expiry_date.strftime("%Y-%m-%d"),
-                            "Premium": float(p_val), 
-                            "Qty": int(qty), 
-                            "Total Credit": round(float(p_val) * qty * 100, 2)
+                            "Premium": f"USD {int(p_val * 100)}", 
+                            "Qty": int(qty),
+                            "Commission": round(order_comm, 2),
+                            "Total Profit": round(total_profit, 2)
                         }
                         st.session_state.journal_data = pd.concat([st.session_state.journal_data, pd.DataFrame([new_row])], ignore_index=True)
                         st.rerun()
