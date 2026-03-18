@@ -11,7 +11,7 @@ from alpaca.data.enums import OptionsFeed, DataFeed
 # --- 1. CONFIG & API ---
 st.set_page_config(page_title="Lucky Quants Lab", page_icon="🧪", layout="wide")
 
-# FIX: Background set to transparent to inherit system theme background
+# Theme-adaptive CSS for Metric Boxes
 st.markdown("""
 <style>
     [data-testid="stMetric"] {
@@ -105,7 +105,8 @@ with tab2:
     m2.metric("**Active Trades** 📈", active_count)
 
     with st.expander("➕ Log New Trade"):
-        if st.button("🔄 Reset Form", use_container_width=False):
+        # UPDATED: Button text shortened to "Reset"
+        if st.button("🔄 Reset", use_container_width=False):
             st.session_state.log_tk = ""
             st.session_state.log_st = None
             st.session_state.log_op = None
