@@ -1,18 +1,27 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import os
 from scipy.stats import norm
 from datetime import datetime, timedelta
 from alpaca.data.historical import OptionHistoricalDataClient, StockHistoricalDataClient
 from alpaca.data.requests import OptionChainRequest, StockLatestQuoteRequest
 from alpaca.data.enums import OptionsFeed, DataFeed
 
-# --- 1. CONFIG & BRANDING ---
+# --- 1. CONFIG & STYLING ---
 st.set_page_config(page_title="Lucky Quants Lab", page_icon="🧪", layout="wide")
 
-# TOP LEFT BRANDING
-st.markdown("# 🧪 Lucky Quants Lab")
-st.markdown("---")
+# Custom CSS for a "prettier" look
+st.markdown("""
+    <style>
+    .stMetric { background-color: #f0f2f6; padding: 15px; border-radius: 10px; border: 1px solid #dcdcdc; }
+    div[data-testid="stExpander"] { border: 1px solid #e6e9ef; border-radius: 10px; }
+    .stButton>button { border-radius: 8px; }
+    </style>
+    """, unsafe_allow_html=True)
+
+st.markdown("### 🧪 Lucky Quants Lab")
+st.divider()
 
 try:
     API_KEY = st.secrets["ALPACA_KEY"]
@@ -23,12 +32,25 @@ except:
     st.error("Alpaca Keys Missing in Secrets.")
     st.stop()
 
-# --- 2. SESSION STATE ---
+# --- 2. PERMANENT STORAGE (AUTO-SAVE) ---
+DB_FILE = "lucky_ledger.csv"
+
+def save_data(df):
+    df.to_csv(DB_FILE, index=False)
+
+def load_data():
+    if os.path.exists(DB_FILE):
+        try:
+            return pd.read_csv(DB_FILE)
+        except:
+            pass
+    return pd.DataFrame(columns=["Ticker", "Type", "Strike", "Expiry", "Premium", "Qty", "Total Premium Collected"])
+
 if 'journal_data' not in st.session_state:
-    st.session_state.journal_data = pd.DataFrame(columns=["Ticker", "Type", "Strike", "Expiry", "Premium (Total)", "Qty", "Total Premium Collected"])
+    st.session_state.journal_data = load_data()
 
 if 'last_refresh' not in st.session_state:
-    st.session_state.last_refresh = "Never"
+    st.session_state.last_refresh = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 # --- 3. TABS ---
 tab1, tab2 = st.tabs(["🔍 Strategy Optimizer", "📓 Lucky Ledger"])
@@ -70,28 +92,31 @@ with tab1:
             except Exception as e:
                 st.error(f"Scanner Error: {e}")
 
-# --- TAB 2: LUCKY LEDGER (Manual Calc) ---
+# --- TAB 2: LUCKY LEDGER ---
 with tab2:
-    st.subheader("📓 Trade Ledger")
+    # --- METRICS SECTION ---
+    raw_total_usd = pd.to_numeric(st.session_state.journal_data["Total Premium Collected"], errors='coerce').fillna(0).sum()
+    total_usd_int = int(round(raw_total_usd))
+    total_hkd_int = int(round(raw_total_usd * 7.8))
     
-    # Updated Metric Label with Emoji on the RIGHT
-    total_net = pd.to_numeric(st.session_state.journal_data["Total Premium Collected"], errors='coerce').fillna(0).sum()
-    st.metric("**Total Premium Collected** 🤑", f"${total_net:,.2f}")
+    st.metric(label="**Total Premium Collected** 🤑", value=f"${total_usd_int:,} (${total_hkd_int:,} HKD)")
+    st.divider()
 
+    # --- INPUT SECTION ---
     with st.expander("➕ Log New Trade", expanded=True):
         l1, l2, l3, l4 = st.columns(4)
-        ticker_log = l1.text_input("Ticker", value="TSM").upper()
+        ticker_log = l1.text_input("Ticker", value="TSM", key="log_ticker").upper()
         strat = l2.selectbox("Type", ["Short Put", "Short Call"])
         qty = l3.number_input("Qty", min_value=1, value=1)
         exp = l4.date_input("Expiry", value=datetime.now().date())
         
         l5, l6 = st.columns(2)
-        strike = l5.number_input("Strike Price", value=None, step=0.5, format="%g", placeholder="Enter Strike (e.g. 345)")
-        price_per_share = l6.number_input("Price per Share", value=None, step=0.01, format="%.2f", placeholder="Enter Fill (e.g. 0.59)")
+        strike = l5.number_input("Strike Price", value=None, step=0.5, format="%g", placeholder="Strike (e.g. 345)")
+        price_per_share = l6.number_input("Price per Share", value=None, step=0.01, format="%.2f", placeholder="Fill Price (e.g. 0.59)")
         
-        if st.button("🚀 Commit & Calculate"):
+        if st.button("🚀 Commit & Calculate", use_container_width=True):
             if strike is None or price_per_share is None:
-                st.error("Please enter both Strike and Price per Share.")
+                st.warning("Please fill in both Strike and Price.")
             else:
                 cash_premium = round(float(price_per_share) * 100, 2)
                 comm = max(1.05, 0.70 * qty)
@@ -102,31 +127,45 @@ with tab2:
                 new_row = {
                     "Ticker": ticker_log, "Type": strat, "Strike": display_strike, 
                     "Expiry": exp.strftime("%Y-%m-%d"),
-                    "Premium (Total)": cash_premium, "Qty": int(qty),
+                    "Premium": cash_premium, "Qty": int(qty),
                     "Total Premium Collected": round(net_total, 2)
                 }
                 st.session_state.journal_data = pd.concat([st.session_state.journal_data, pd.DataFrame([new_row])], ignore_index=True)
+                save_data(st.session_state.journal_data)
                 st.rerun()
 
+    # --- TABLE SECTION ---
     st.write("### History")
-    st.session_state.journal_data = st.data_editor(st.session_state.journal_data, num_rows="dynamic", use_container_width=True)
+    
+    # Red Delete Button (Aligned Left)
+    if st.button("🗑️ Delete Last Entry", type="secondary", help="Removes the most recent trade"):
+        if not st.session_state.journal_data.empty:
+            st.session_state.journal_data = st.session_state.journal_data.drop(st.session_state.journal_data.index[-1])
+            save_data(st.session_state.journal_data)
+            st.rerun()
 
-    # REFRESH BUTTON & TIMESTAMP BOTTOM RIGHT
+    updated_df = st.data_editor(st.session_state.journal_data, num_rows="dynamic", use_container_width=True, key="ledger_editor")
+    
+    if not updated_df.equals(st.session_state.journal_data):
+        st.session_state.journal_data = updated_df
+        save_data(updated_df)
+
+    # --- FOOTER ---
+    st.divider()
     c_btn, c_time = st.columns([1, 1])
     with c_btn:
         if st.button("🔄 Refresh & Recalculate"):
             df = st.session_state.journal_data.copy()
-            df["Premium (Total)"] = pd.to_numeric(df["Premium (Total)"], errors='coerce').fillna(0)
+            df["Premium"] = pd.to_numeric(df["Premium"], errors='coerce').fillna(0)
             df["Qty"] = pd.to_numeric(df["Qty"], errors='coerce').fillna(1)
             df["Total Premium Collected"] = df.apply(
-                lambda row: round((row["Premium (Total)"] * row["Qty"]) - max(1.05, 0.70 * row["Qty"]), 2), 
+                lambda row: round((row["Premium"] * row["Qty"]) - max(1.05, 0.70 * row["Qty"]), 2), 
                 axis=1
             )
             st.session_state.journal_data = df
+            save_data(df)
             st.session_state.last_refresh = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            st.success("All calculations verified!")
             st.rerun()
     
     with c_time:
-        # Aligning text to the bottom right
-        st.markdown(f"<p style='text-align: right; color: gray; padding-top: 15px;'>Last Refreshed: {st.session_state.last_refresh}</p>", unsafe_allow_html=True)
+        st.markdown(f"<p style='text-align: right; color: gray;'>Last Refreshed: {st.session_state.last_refresh}</p>", unsafe_allow_html=True)
