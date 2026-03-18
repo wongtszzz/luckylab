@@ -39,12 +39,12 @@ DB, BKP = "lucky_ledger.csv", "lucky_ledger_backup.csv"
 COLS = ["Ticker", "Type", "Strike", "Expiry", "Open Price", "Close Price", "Qty", "Commission", "Premium", "Status"]
 
 def calc_ibkr_commission(qty):
-    """Calculates IBKR Tiered Commission (~0.70 per contract, min 1.00 per order)"""
+    """Calculates IBKR Tiered Commission strictly as 1.05 per contract"""
     try:
         q = float(qty)
-        return round(max(1.00, 0.70 * q), 2)
+        return round(q * 1.05, 2)
     except:
-        return 1.00
+        return 1.05
 
 def save_and_backup(df):
     df[COLS].to_csv(DB, index=False)
@@ -104,7 +104,7 @@ with tab2:
     active_count = len(df_j[df_j["Status"].astype(str).str.contains("Open", na=False)])
     
     m1, m2 = st.columns(2)
-    m1.metric("**Total Premium** 🤑", f"{int(round(total_prem)):,} (~HKD {int(round(total_prem*7.8)):,})")
+    m1.metric("**Total Premium** 🤑", f"{total_prem:,.2f} (~HKD {(total_prem*7.8):,.2f})")
     m2.metric("**Active Trades** 📈", active_count)
 
     with st.expander("➕ Log New Trade"):
@@ -122,7 +122,7 @@ with tab2:
         
         l5, l6 = st.columns(2)
         n_st = l5.number_input("Strike", value=None, placeholder="Type Strike...", step=0.1, key="log_st", format="%.1f")
-        n_op = l6.number_input("Open Price", value=None, placeholder="Type Price...", step=0.1, key="log_op", format="%.1f")
+        n_op = l6.number_input("Open Price", value=None, placeholder="Type Price...", step=0.01, key="log_op", format="%.2f")
         
         if st.button("🚀 Commit Trade", use_container_width=True):
             if n_st is not None and n_op is not None and n_tk != "":
@@ -130,7 +130,7 @@ with tab2:
                 net = round((n_op * 100 * n_qt) - comm, 2)
                 stat = "Expired (Win)" if n_ex < datetime.now().date() else "Open / Running"
                 
-                new_row = pd.DataFrame([{"Ticker": n_tk, "Type": n_ty, "Strike": round(n_st, 1), "Expiry": str(n_ex), "Open Price": round(n_op, 1), "Close Price": 0.0, "Qty": n_qt, "Commission": comm, "Premium": net, "Status": stat}])
+                new_row = pd.DataFrame([{"Ticker": n_tk, "Type": n_ty, "Strike": round(n_st, 1), "Expiry": str(n_ex), "Open Price": round(n_op, 2), "Close Price": 0.0, "Qty": n_qt, "Commission": comm, "Premium": net, "Status": stat}])
                 st.session_state.journal = pd.concat([df_j, new_row], ignore_index=True)
                 save_and_backup(st.session_state.journal)
                 
@@ -144,11 +144,11 @@ with tab2:
         st.session_state.journal, 
         num_rows="dynamic", 
         use_container_width=True, 
-        key="ledger_editor_v13",
+        key="ledger_editor_v14",
         column_config={
             "Strike": st.column_config.NumberColumn(format="%.1f"),
-            "Open Price": st.column_config.NumberColumn(format="%.1f"),
-            "Close Price": st.column_config.NumberColumn(format="%.1f"),
+            "Open Price": st.column_config.NumberColumn(format="%.2f"),
+            "Close Price": st.column_config.NumberColumn(format="%.2f"),
             "Commission": st.column_config.NumberColumn(format="$%.2f"),
             "Premium": st.column_config.NumberColumn(format="$%.2f")
         }
@@ -156,8 +156,8 @@ with tab2:
 
     def refresh_calculations(current_df):
         current_df["Strike"] = pd.to_numeric(current_df["Strike"], errors='coerce').fillna(0).round(1)
-        current_df["Open Price"] = pd.to_numeric(current_df["Open Price"], errors='coerce').fillna(0).round(1)
-        current_df["Close Price"] = pd.to_numeric(current_df["Close Price"], errors='coerce').fillna(0).round(1)
+        current_df["Open Price"] = pd.to_numeric(current_df["Open Price"], errors='coerce').fillna(0).round(2)
+        current_df["Close Price"] = pd.to_numeric(current_df["Close Price"], errors='coerce').fillna(0).round(2)
         current_df["Qty"] = pd.to_numeric(current_df["Qty"], errors='coerce').fillna(1)
         current_df["Commission"] = current_df["Qty"].apply(calc_ibkr_commission)
         
@@ -177,7 +177,7 @@ with tab2:
         save_and_backup(st.session_state.journal)
         st.rerun()
 
-    # Manual Refresh Button (Bottom Left equivalent placement)
+    # Manual Refresh Button
     st.divider()
     if st.button("🔄 Refresh Data", use_container_width=False):
         st.session_state.journal = refresh_calculations(st.session_state.journal)
