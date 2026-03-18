@@ -11,7 +11,6 @@ from alpaca.data.enums import OptionsFeed, DataFeed
 # --- 1. CONFIG & API ---
 st.set_page_config(page_title="Lucky Quants Lab", page_icon="🧪", layout="wide")
 
-# Theme-adaptive CSS for Metric Boxes
 st.markdown("""
 <style>
     [data-testid="stMetric"] {
@@ -19,13 +18,12 @@ st.markdown("""
         padding: 15px; 
         border-radius: 10px; 
         border: 1px solid rgba(128, 128, 128, 0.3);
-        box-shadow: 0px 2px 4px rgba(0,0,0,0.05);
     }
-    .footer { position: fixed; bottom: 10px; right: 10px; color: gray; font-size: 0.7em; }
+    .footer-right { position: fixed; bottom: 10px; right: 10px; color: gray; font-size: 0.8em; font-weight: bold; z-index: 1000; }
 </style>
 """, unsafe_allow_html=True)
 
-# Branding Header (Top Left)
+# Branding Header
 st.markdown("### 🧪 Lucky Quants Lab")
 st.divider()
 
@@ -36,37 +34,42 @@ try:
 except:
     st.error("Alpaca Keys Missing."); st.stop()
 
-# --- 2. DATA ENGINE ---
+# --- 2. LOGIC & DATA ENGINE ---
 DB, BKP = "lucky_ledger.csv", "lucky_ledger_backup.csv"
-COLS = ["Ticker", "Type", "Strike", "Expiry", "Open Price", "Close Price", "Qty", "Premium", "Status"]
+COLS = ["Ticker", "Type", "Strike", "Expiry", "Open Price", "Close Price", "Qty", "Commission", "Premium", "Status"]
+
+def calc_ibkr_commission(qty):
+    """Calculates IBKR Tiered Commission (~0.70 per contract, min 1.00 per order)"""
+    try:
+        q = float(qty)
+        return round(max(1.00, 0.70 * q), 2)
+    except:
+        return 1.00
 
 def save_and_backup(df):
     df[COLS].to_csv(DB, index=False)
     shutil.copy2(DB, BKP)
-    st.session_state.last_backup = datetime.now().strftime("%H:%M:%S")
+    st.session_state.last_update = datetime.now().strftime("%Y-%m-%d")
 
 def load_and_clean():
     if not os.path.exists(DB) and os.path.exists(BKP): shutil.copy2(BKP, DB)
     if os.path.exists(DB):
         try:
             df = pd.read_csv(DB)
-            df = df.loc[:, ~df.columns.duplicated()].copy()
-            df = df.rename(columns={"Total Premium Collected": "Premium", "Premium (Total)": "Premium", "Premium (total)": "Premium"})
-            if isinstance(df.get("Premium"), pd.DataFrame):
-                df = df.drop(columns="Premium").assign(Premium=df["Premium"].bfill(axis=1).iloc[:, 0])
             for c in COLS:
                 if c not in df.columns:
-                    df[c] = 0.0 if c in ["Open Price", "Close Price", "Premium"] else (1 if c == "Qty" else "Unknown")
-            df["Premium"] = pd.to_numeric(df["Premium"], errors='coerce').fillna(0.0)
-            df['is_open'] = df['Status'].astype(str).str.contains("Open", case=False, na=False)
+                    df[c] = 0.0 if c in ["Open Price", "Close Price", "Premium", "Commission"] else (1 if c == "Qty" else "Unknown")
             df['exp_dt'] = pd.to_datetime(df['Expiry'], errors='coerce')
+            df['is_open'] = df['Status'].astype(str).str.contains("Open", case=False, na=False)
             df = df.sort_values(by=['is_open', 'exp_dt'], ascending=[False, False])
             return df[COLS].reset_index(drop=True)
         except:
             return pd.DataFrame(columns=COLS)
     return pd.DataFrame(columns=COLS)
 
-if 'journal' not in st.session_state: st.session_state.journal = load_and_clean()
+if 'journal' not in st.session_state: 
+    st.session_state.journal = load_and_clean()
+    st.session_state.last_update = datetime.now().strftime("%Y-%m-%d")
 
 # --- 3. UI TABS ---
 tab1, tab2 = st.tabs(["🔍 Strategy Optimizer", "📓 Lucky Ledger"])
@@ -105,15 +108,14 @@ with tab2:
     m2.metric("**Active Trades** 📈", active_count)
 
     with st.expander("➕ Log New Trade"):
-        # UPDATED: Button text shortened to "Reset"
-        if st.button("🔄 Reset", use_container_width=False):
+        if st.button("🔄 Reset", key="reset_btn"):
             st.session_state.log_tk = ""
             st.session_state.log_st = None
             st.session_state.log_op = None
             st.rerun()
 
         l1, l2, l3, l4 = st.columns(4)
-        n_tk = l1.text_input("Ticker", value="TSM", key="log_tk", placeholder="Ticker...").upper()
+        n_tk = l1.text_input("Ticker", value="TSM", key="log_tk").upper()
         n_ty = l2.selectbox("Type", ["Short Put", "Short Call"], key="log_ty")
         n_qt = l3.number_input("Qty", 1, key="log_qty")
         n_ex = l4.date_input("Expiry", datetime.now().date(), key="log_ex")
@@ -122,11 +124,13 @@ with tab2:
         n_st = l5.number_input("Strike", value=None, placeholder="Type Strike...", step=0.1, key="log_st", format="%.1f")
         n_op = l6.number_input("Open Price", value=None, placeholder="Type Price...", step=0.1, key="log_op", format="%.1f")
         
-        if st.button("🚀 Commit Trade", use_container_width=True, key="log_btn"):
+        if st.button("🚀 Commit Trade", use_container_width=True):
             if n_st is not None and n_op is not None and n_tk != "":
-                net = round((n_op * 100 * n_qt) - max(1.05, 0.70 * n_qt), 2)
+                comm = calc_ibkr_commission(n_qt)
+                net = round((n_op * 100 * n_qt) - comm, 2)
                 stat = "Expired (Win)" if n_ex < datetime.now().date() else "Open / Running"
-                new_row = pd.DataFrame([{"Ticker": n_tk, "Type": n_ty, "Strike": round(n_st, 1), "Expiry": str(n_ex), "Open Price": round(n_op, 1), "Close Price": 0.0, "Qty": n_qt, "Premium": net, "Status": stat}])
+                
+                new_row = pd.DataFrame([{"Ticker": n_tk, "Type": n_ty, "Strike": round(n_st, 1), "Expiry": str(n_ex), "Open Price": round(n_op, 1), "Close Price": 0.0, "Qty": n_qt, "Commission": comm, "Premium": net, "Status": stat}])
                 st.session_state.journal = pd.concat([df_j, new_row], ignore_index=True)
                 save_and_backup(st.session_state.journal)
                 
@@ -134,38 +138,51 @@ with tab2:
                 st.session_state.log_st = None
                 st.session_state.log_op = None
                 st.rerun()
-            else:
-                st.warning("Please ensure Ticker, Strike, and Open Price are entered.")
 
     st.write("### History")
     edt = st.data_editor(
         st.session_state.journal, 
         num_rows="dynamic", 
         use_container_width=True, 
-        key="ledger_final_v11",
+        key="ledger_editor_v13",
         column_config={
-            "Strike": st.column_config.NumberColumn("Strike", format="%.1f"),
-            "Open Price": st.column_config.NumberColumn("Open Price", format="%.1f"),
-            "Close Price": st.column_config.NumberColumn("Close Price", format="%.2f"),
-            "Premium": st.column_config.NumberColumn("Premium", format="%.2f")
+            "Strike": st.column_config.NumberColumn(format="%.1f"),
+            "Open Price": st.column_config.NumberColumn(format="%.1f"),
+            "Close Price": st.column_config.NumberColumn(format="%.1f"),
+            "Commission": st.column_config.NumberColumn(format="$%.2f"),
+            "Premium": st.column_config.NumberColumn(format="$%.2f")
         }
     )
-    
-    if not edt.equals(st.session_state.journal):
-        edt["Strike"] = pd.to_numeric(edt["Strike"], errors='coerce').fillna(0).round(1)
-        edt["Open Price"] = pd.to_numeric(edt["Open Price"], errors='coerce').fillna(0).round(1)
-        edt["Close Price"] = pd.to_numeric(edt["Close Price"], errors='coerce').fillna(0)
+
+    def refresh_calculations(current_df):
+        current_df["Strike"] = pd.to_numeric(current_df["Strike"], errors='coerce').fillna(0).round(1)
+        current_df["Open Price"] = pd.to_numeric(current_df["Open Price"], errors='coerce').fillna(0).round(1)
+        current_df["Close Price"] = pd.to_numeric(current_df["Close Price"], errors='coerce').fillna(0).round(1)
+        current_df["Qty"] = pd.to_numeric(current_df["Qty"], errors='coerce').fillna(1)
+        current_df["Commission"] = current_df["Qty"].apply(calc_ibkr_commission)
         
-        def refresh_row(r):
-            p = round(((r["Open Price"] - r["Close Price"]) * 100 * r["Qty"]) - max(1.05, 0.70 * r["Qty"]), 2)
+        def update_row(r):
+            p = round(((r["Open Price"] - r["Close Price"]) * 100 * r["Qty"]) - r["Commission"], 2)
             try: ex_d = datetime.strptime(str(r["Expiry"]), "%Y-%m-%d").date()
             except: ex_d = datetime.now().date()
             s = "Closed" if r["Close Price"] > 0 else ("Expired (Win)" if ex_d < datetime.now().date() else "Open / Running")
             return pd.Series([p, s])
+        
+        current_df[["Premium", "Status"]] = current_df.apply(update_row, axis=1)
+        return current_df
 
-        edt[["Premium", "Status"]] = edt.apply(refresh_row, axis=1)
-        st.session_state.journal = edt
-        save_and_backup(edt); st.rerun()
+    # Auto-update if data editor changes
+    if not edt.equals(st.session_state.journal):
+        st.session_state.journal = refresh_calculations(edt)
+        save_and_backup(st.session_state.journal)
+        st.rerun()
 
-# --- FOOTER ---
-st.markdown(f'<div class="footer">Last Backup: {st.session_state.get("last_backup", "Initial")}</div>', unsafe_allow_html=True)
+    # Manual Refresh Button (Bottom Left equivalent placement)
+    st.divider()
+    if st.button("🔄 Refresh Data", use_container_width=False):
+        st.session_state.journal = refresh_calculations(st.session_state.journal)
+        save_and_backup(st.session_state.journal)
+        st.rerun()
+
+# --- TIMESTAMP FOOTER ---
+st.markdown(f'<div class="footer-right">Last Updated: {st.session_state.last_update}</div>', unsafe_allow_html=True)
