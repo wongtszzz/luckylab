@@ -102,21 +102,34 @@ with tab2:
         n_qt = l3.number_input("Qty", 1, key="log_qty")
         n_ex = l4.date_input("Expiry", datetime.now().date(), key="log_ex")
         l5, l6 = st.columns(2)
-        n_st = l5.number_input("Strike", 0.0, step=0.5, key="log_st")
-        n_op = l6.number_input("Open Price", 0.0, step=0.01, key="log_op")
+        n_st = l5.number_input("Strike", 0.0, step=0.1, key="log_st", format="%.1f")
+        n_op = l6.number_input("Open Price", 0.0, step=0.1, key="log_op", format="%.1f")
         
         if st.button("🚀 Commit Trade", use_container_width=True, key="log_btn"):
             net = round((n_op * 100 * n_qt) - max(1.05, 0.70 * n_qt), 2)
             stat = "Expired (Win)" if n_ex < datetime.now().date() else "Open / Running"
-            new_row = pd.DataFrame([{"Ticker": n_tk, "Type": n_ty, "Strike": n_st, "Expiry": str(n_ex), "Open Price": n_op, "Close Price": 0.0, "Qty": n_qt, "Premium": net, "Status": stat}])
+            new_row = pd.DataFrame([{"Ticker": n_tk, "Type": n_ty, "Strike": round(n_st, 1), "Expiry": str(n_ex), "Open Price": round(n_op, 1), "Close Price": 0.0, "Qty": n_qt, "Premium": net, "Status": stat}])
             st.session_state.journal = pd.concat([df_j, new_row], ignore_index=True)
             save_and_backup(st.session_state.journal); st.rerun()
 
     st.write("### History")
-    edt = st.data_editor(st.session_state.journal, num_rows="dynamic", use_container_width=True, key="ledger_final_v6")
+    # THE FIX: Added Strike column to the 1 decimal formatting
+    edt = st.data_editor(
+        st.session_state.journal, 
+        num_rows="dynamic", 
+        use_container_width=True, 
+        key="ledger_final_v8",
+        column_config={
+            "Strike": st.column_config.NumberColumn("Strike", format="%.1f"),
+            "Open Price": st.column_config.NumberColumn("Open Price", format="%.1f"),
+            "Close Price": st.column_config.NumberColumn("Close Price", format="%.2f"),
+            "Premium": st.column_config.NumberColumn("Premium", format="%.2f")
+        }
+    )
     
     if not edt.equals(st.session_state.journal):
-        edt["Open Price"] = pd.to_numeric(edt["Open Price"], errors='coerce').fillna(0)
+        edt["Strike"] = pd.to_numeric(edt["Strike"], errors='coerce').fillna(0).round(1)
+        edt["Open Price"] = pd.to_numeric(edt["Open Price"], errors='coerce').fillna(0).round(1)
         edt["Close Price"] = pd.to_numeric(edt["Close Price"], errors='coerce').fillna(0)
         
         def refresh_row(r):
