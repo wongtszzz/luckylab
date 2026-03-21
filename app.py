@@ -13,24 +13,44 @@ from github import Github
 # --- 1. CONFIG & API ---
 st.set_page_config(page_title="Lucky Quants Lab", page_icon="🧪", layout="wide")
 
-# Custom CSS for better visibility
+# Custom CSS for Equal Sized Boxes and Centered Content
 st.markdown("""
 <style>
-    /* Ensure metrics don't cut off and look clean */
-    [data-testid="stMetricValue"] {
-        font-size: 1.6rem !important;
-        white-space: nowrap !important;
+    /* Force columns to contain equal-sized metric boxes */
+    [data-testid="column"] {
+        width: 100% !important;
+        flex: 1 1 0 !important;
+        min-width: 0 !important;
     }
-    [data-testid="stMetricLabel"] {
-        font-weight: bold !important;
-        font-size: 1.1rem !important;
-    }
+    
     [data-testid="stMetric"] {
         background-color: rgba(28, 131, 225, 0.1); 
-        padding: 15px; 
+        padding: 20px; 
         border-radius: 15px; 
         border: 1px solid rgba(128, 128, 128, 0.3);
+        height: 150px; /* Fixed height for symmetry */
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        text-align: center;
     }
+
+    [data-testid="stMetricValue"] {
+        font-size: 1.8rem !important;
+        line-height: 1.2 !important;
+    }
+
+    [data-testid="stMetricLabel"] {
+        font-size: 1.1rem !important;
+        margin-bottom: 10px !important;
+    }
+
+    [data-testid="stMetricDelta"] {
+        font-size: 1rem !important;
+        justify-content: center !important;
+    }
+
     .footer-right { position: fixed; bottom: 10px; right: 10px; color: gray; font-size: 0.8em; font-weight: bold; z-index: 1000; }
 </style>
 """, unsafe_allow_html=True)
@@ -51,7 +71,7 @@ try:
     gh = Github(GITHUB_TOKEN)
     repo = gh.get_repo(GITHUB_REPO)
 except Exception as e:
-    st.error(f"Missing or incorrect secrets! Please check your Streamlit Secrets.")
+    st.error(f"Secrets Error. Check Streamlit Settings.")
     st.stop()
 
 # --- 2. LOGIC & DATA ENGINE ---
@@ -61,15 +81,15 @@ COLS = ["Ticker", "Type", "Strike", "Expiry", "Open Price", "Close Price", "Qty"
 def save_journal(df):
     try:
         csv_content = df[COLS].to_csv(index=False)
-        commit_message = f"Ledger update: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        commit_message = f"Update: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
         try:
             contents = repo.get_contents(FILE_PATH)
             repo.update_file(contents.path, commit_message, csv_content, contents.sha)
         except:
-            repo.create_file(FILE_PATH, "Initial ledger creation", csv_content)
-        st.session_state.last_update = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            repo.create_file(FILE_PATH, "Init", csv_content)
+        st.session_state.last_update = datetime.now().strftime("%Y-%m-%d")
     except Exception as e:
-        st.error(f"Failed to save to GitHub: {e}")
+        st.error(f"GitHub Sync Failed: {e}")
 
 def load_journal():
     try:
@@ -95,32 +115,31 @@ tab1, tab2 = st.tabs(["🔍 Strategy Optimizer", "📓 Lucky Ledger"])
 
 # --- OPTIMIZER ---
 with tab1:
-    st.write("Calculates short put probabilities using Black-Scholes.")
-    c1, c2, c3 = st.columns([1, 1, 1])
-    tk = c1.text_input("Ticker", value="TSM", key="opt_tk").upper()
-    sf = c2.slider("Safety % Target", 70, 99, 90)
-    iv_input = c3.slider("Est. Implied Volatility (IV) %", 10, 200, 30) 
+    st.write("Short Put Probability Analysis")
+    c1, c2, c3 = st.columns(3)
+    tk = c1.text_input("Ticker", value="TSM").upper()
+    sf = c2.slider("Safety %", 70, 99, 90)
+    iv_input = c3.slider("IV %", 10, 200, 30) 
     
     if st.button("🔬 Run Analysis", type="primary"):
-        with st.spinner("Fetching data..."):
-            try:
-                px = stock_client.get_stock_latest_quote(StockLatestQuoteRequest(symbol_or_symbols=tk, feed=DataFeed.IEX))[tk].ask_price
-                exp = datetime.now() + timedelta(days=(4-datetime.now().weekday()+7)%7 or 7)
-                chain = opt_client.get_option_chain(OptionChainRequest(underlying_symbol=tk, expiration_date=exp.date(), feed=OptionsFeed.INDICATIVE))
-                res = []
-                iv_decimal = iv_input / 100.0
-                for s, d in chain.items():
-                    stk_val = float(s[-8:])/1000
-                    if "P" in s and stk_val < px:
-                        d2 = (np.log(px/stk_val) + (0.04 - 0.5 * iv_decimal**2)*(7/365)) / (iv_decimal * np.sqrt(7/365))
-                        prob = norm.cdf(d2) * 100
-                        if prob >= sf:
-                            mid = (d.bid_price + d.ask_price) / 2
-                            res.append({"Strike": stk_val, "Safety %": round(prob, 1), "Premium": round(mid, 2), "Est. Income": round(mid*100, 2)})
-                st.success(f"**{tk} Price:** ${px:.2f} | **Expiry:** {exp.date()}")
-                if res: st.dataframe(pd.DataFrame(res).sort_values("Strike", ascending=False), use_container_width=True)
-                else: st.warning("No matches found.")
-            except Exception as e: st.error(f"Error: {e}")
+        try:
+            px = stock_client.get_stock_latest_quote(StockLatestQuoteRequest(symbol_or_symbols=tk, feed=DataFeed.IEX))[tk].ask_price
+            exp = datetime.now() + timedelta(days=(4-datetime.now().weekday()+7)%7 or 7)
+            chain = opt_client.get_option_chain(OptionChainRequest(underlying_symbol=tk, expiration_date=exp.date(), feed=OptionsFeed.INDICATIVE))
+            res = []
+            iv_decimal = iv_input / 100.0
+            for s, d in chain.items():
+                stk_val = float(s[-8:])/1000
+                if "P" in s and stk_val < px:
+                    d2 = (np.log(px/stk_val) + (0.04 - 0.5 * iv_decimal**2)*(7/365)) / (iv_decimal * np.sqrt(7/365))
+                    prob = norm.cdf(d2) * 100
+                    if prob >= sf:
+                        mid = (d.bid_price + d.ask_price) / 2
+                        res.append({"Strike": stk_val, "Safety %": round(prob, 1), "Premium": round(mid, 2), "Est. Income": round(mid*100, 2)})
+            st.success(f"**{tk}:** ${px:.2f} | **Expiry:** {exp.date()}")
+            if res: st.dataframe(pd.DataFrame(res).sort_values("Strike", ascending=False), use_container_width=True)
+            else: st.warning("No matches.")
+        except Exception as e: st.error(f"Error: {e}")
 
 # --- LEDGER ---
 with tab2:
@@ -129,19 +148,25 @@ with tab2:
     active_count = len(df_j[df_j["Status"].astype(str).str.contains("Open", na=False)])
     
     m1, m2 = st.columns(2)
-    # Merged HKD into the metric line
-    m1.metric("Total Premium 🤑", f"${total_prem:,.2f}", delta=f"≈ HKD {(total_prem*7.8):,.0f}", delta_color="normal")
-    m2.metric("Active Trades 📈", active_count)
+    
+    # Symmetric Metrics
+    m1.metric(label="Total Premium 🤑", 
+              value=f"${total_prem:,.2f}", 
+              delta=f"≈ HKD {(total_prem*7.8):,.0f}", 
+              delta_color="normal")
+              
+    m2.metric(label="Active Trades 📈", 
+              value=str(active_count))
 
     with st.expander("➕ Log New Trade"):
         l1, l2, l3, l4 = st.columns(4)
-        n_tk = l1.text_input("Ticker", key="n_tk").upper()
-        n_ty = l2.selectbox("Type", ["Short Put", "Short Call"], key="n_ty")
-        n_qt = l3.number_input("Qty", value=1, min_value=1, key="n_qt")
-        n_ex = l4.date_input("Expiry", datetime.now().date(), key="n_ex")
+        n_tk = l1.text_input("Ticker").upper()
+        n_ty = l2.selectbox("Type", ["Short Put", "Short Call"])
+        n_qt = l3.number_input("Qty", value=1, min_value=1)
+        n_ex = l4.date_input("Expiry", datetime.now().date())
         l5, l6 = st.columns(2)
-        n_st = l5.number_input("Strike", value=0.0, format="%.1f", key="n_st")
-        n_op = l6.number_input("Open Price", value=0.0, format="%.2f", key="n_op")
+        n_st = l5.number_input("Strike", value=0.0, format="%.1f")
+        n_op = l6.number_input("Open Price", value=0.0, format="%.2f")
         
         if st.button("🚀 Commit Trade", use_container_width=True, type="primary"):
             if n_tk:
@@ -156,37 +181,4 @@ with tab2:
     st.write("### Trade History")
     def refresh_calculations(current_df):
         for col in ["Strike", "Open Price", "Close Price", "Qty", "Commission"]:
-            current_df[col] = pd.to_numeric(current_df[col], errors='coerce').fillna(0)
-        
-        def update_row(r):
-            p = round(((float(r["Open Price"]) - float(r["Close Price"])) * 100 * int(r["Qty"])) - float(r["Commission"]), 2)
-            try: ex_d = datetime.strptime(str(r["Expiry"]), "%Y-%m-%d").date()
-            except: ex_d = datetime.now().date()
-            if float(r["Close Price"]) > 0: s = "Closed"
-            else: s = "Expired (Win)" if ex_d < datetime.now().date() else "Open / Running"
-            return pd.Series([p, s])
-        
-        current_df[["Premium", "Status"]] = current_df.apply(update_row, axis=1)
-        return current_df
-
-    edt = st.data_editor(
-        st.session_state.journal, 
-        num_rows="dynamic", 
-        use_container_width=True, 
-        key="ledger_editor_v2",
-        column_config={
-            "Strike": st.column_config.NumberColumn(format="%.1f"),
-            "Open Price": st.column_config.NumberColumn(format="%.2f"),
-            "Close Price": st.column_config.NumberColumn(format="%.2f"),
-            "Commission": st.column_config.NumberColumn(format="$%.2f"),
-            "Premium": st.column_config.NumberColumn(format="$%.2f")
-        }
-    )
-
-    if not edt.equals(st.session_state.journal):
-        updated_df = refresh_calculations(edt)
-        st.session_state.journal = updated_df
-        save_journal(updated_df)
-        st.rerun()
-
-st.markdown(f'<div class="footer-right">Last Synced: {st.session_state.last_update}</div>', unsafe_allow_html=True)
+            current_df[col] = pd.to_
