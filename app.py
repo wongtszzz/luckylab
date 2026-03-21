@@ -77,7 +77,6 @@ def sort_ledger(df):
 
 def save_journal(df):
     try:
-        # Ensure it is perfectly sorted before saving to GitHub
         df_sorted = sort_ledger(df)
         csv_content = df_sorted[COLS].to_csv(index=False)
         commit_message = f"Ledger Auto-Sync: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
@@ -95,6 +94,8 @@ def load_journal():
         contents = repo.get_contents(FILE_PATH)
         decoded_content = base64.b64decode(contents.content).decode('utf-8')
         df = pd.read_csv(io.StringIO(decoded_content))
+        
+        # Data Migration: Fill missing columns
         for c in COLS:
             if c not in df.columns:
                 if c == "Date": df[c] = datetime.now().strftime("%Y-%m-%d")
@@ -106,7 +107,8 @@ def load_journal():
             st.error(f"⚠️ Emergency Stop: Could not connect to GitHub. Error: {e}")
             st.stop()
 
-if 'journal' not in st.session_state: 
+# PRO FIX: Schema Validation! Forces a reload if your browser memory has the old columns.
+if 'journal' not in st.session_state or set(st.session_state.journal.columns) != set(COLS): 
     st.session_state.journal = load_journal()
     st.session_state.last_update = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -140,119 +142,4 @@ with tab1:
                 st.success(f"**{tk} Price:** ${px:.2f} | **Expiry:** {exp.date()}")
                 if res: st.dataframe(pd.DataFrame(res).sort_values("Strike", ascending=False), use_container_width=True)
                 else: st.warning("No matches.")
-            except Exception as e: st.error(f"Error: {e}")
-
-# --- LEDGER ---
-with tab2:
-    df_j = st.session_state.journal
-    
-    # --- METRIC CALCULATIONS ---
-    # 1. Realized, Active, and Pro Metrics
-    realized_df = df_j[~df_j["Status"].astype(str).str.contains("Open", na=False)]
-    total_realized = realized_df["Premium"].sum()
-    
-    # Calculate Win Rate
-    total_closed = len(realized_df)
-    wins = len(realized_df[realized_df["Status"].astype(str).str.contains("Win", na=False)])
-    win_rate = (wins / total_closed * 100) if total_closed > 0 else 0.0
-    
-    # Active Trades and Collateral Risk
-    active_df = df_j[df_j["Status"].astype(str).str.contains("Open", na=False)]
-    active_count = len(active_df)
-    capital_at_risk = (pd.to_numeric(active_df["Strike"]) * 100 * pd.to_numeric(active_df["Qty"])).sum()
-    
-    # 2. Weekly Metrics (Last 7 Days)
-    df_j['temp_dt'] = pd.to_datetime(df_j['Date'], errors='coerce')
-    week_ago = datetime.now() - timedelta(days=7)
-    weekly_df = df_j[df_j['temp_dt'] >= week_ago]
-    weekly_profit = weekly_df["Premium"].sum()
-    
-    if not weekly_df.empty:
-        best_row = weekly_df.loc[weekly_df["Premium"].idxmax()]
-        worst_row = weekly_df.loc[weekly_df["Premium"].idxmin()]
-        best_str = f"{best_row['Ticker']} (+${best_row['Premium']:.0f})"
-        worst_str = f"Worst: {worst_row['Ticker']} (${worst_row['Premium']:.0f})"
-    else:
-        best_str, worst_str = "No trades", "No trades"
-    
-    # --- UI: 2x2 DASHBOARD ---
-    r1c1, r1c2 = st.columns(2)
-    r1c1.metric("Total Realized 🤑", f"${total_realized:,.2f}", f"Win Rate: {win_rate:.1f}%", delta_color="off")
-    r1c2.metric("Active Trades 📈", str(active_count), f"Capital at Risk: ${capital_at_risk:,.0f}", delta_color="off")
-    
-    r2c1, r2c2 = st.columns(2)
-    r2c1.metric("Weekly Profit (7d) 📅", f"${weekly_profit:,.2f}", "Includes Realized + Unrealized", delta_color="off")
-    r2c2.metric("Top Trade (7d) 🏆", best_str, worst_str, delta_color="off")
-
-    with st.expander("➕ Log New Trade"):
-        # The Date Input is gone!
-        l1, l2, l3, l4 = st.columns(4)
-        n_tk = l1.text_input("Ticker", key="new_tk").upper()
-        n_ty = l2.selectbox("Type", ["Short Put", "Short Call"])
-        n_qt = l3.number_input("Qty", value=1, min_value=1)
-        n_ex = l4.date_input("Expiry", datetime.now().date() + timedelta(days=7))
-        
-        l5, l6 = st.columns(2)
-        n_st = l5.number_input("Strike", value=0.0, format="%.1f")
-        n_op = l6.number_input("Open Price", value=0.0, format="%.2f")
-        
-        if st.button("🚀 Commit Trade", use_container_width=True, type="primary"):
-            if n_tk:
-                comm = round(n_qt * 1.05, 2)
-                net = round((float(n_op) * 100 * n_qt) - comm, 2)
-                stat = "Expired (Win)" if n_ex < datetime.now().date() else "Open / Active"
-                
-                # Auto-injects today's date dynamically
-                new_row = pd.DataFrame([{"Date": str(datetime.now().date()), "Ticker": n_tk, "Type": n_ty, "Strike": round(n_st, 1), "Expiry": str(n_ex), "Open Price": round(float(n_op), 2), "Close Price": 0.0, "Qty": n_qt, "Commission": comm, "Premium": net, "Status": stat}])
-                
-                st.session_state.journal = pd.concat([df_j.drop(columns=['temp_dt'], errors='ignore'), new_row], ignore_index=True)
-                save_journal(st.session_state.journal)
-                st.rerun()
-
-    st.write("### Trade History")
-    
-    def refresh_calculations(current_df):
-        for col in ["Strike", "Open Price", "Close Price", "Qty", "Commission"]:
-            current_df[col] = pd.to_numeric(current_df[col], errors='coerce').fillna(0)
-        
-        def update_row(r):
-            open_p, close_p = float(r["Open Price"]), float(r["Close Price"])
-            p = round(((open_p - close_p) * 100 * int(r["Qty"])) - float(r["Commission"]), 2)
-            
-            try: ex_d = pd.to_datetime(r["Expiry"]).date()
-            except: ex_d = datetime.now().date()
-            
-            if close_p > 0: s = "Closed (Loss)" if close_p > open_p else "Closed (Win)"
-            elif ex_d < datetime.now().date(): s = "Expired (Win)"
-            else: s = "Open / Active"
-            
-            return pd.Series([p, s])
-        
-        current_df[["Premium", "Status"]] = current_df.apply(update_row, axis=1)
-        
-        # Apply custom sort immediately so the UI table snaps into place
-        return sort_ledger(current_df)
-
-    # Note: 'Date' is now visible in the table so you can edit it if you forgot to log a trade yesterday
-    edt = st.data_editor(
-        st.session_state.journal.drop(columns=['temp_dt'], errors='ignore'), 
-        num_rows="dynamic", 
-        use_container_width=True, 
-        key="ledger_editor_v6",
-        column_config={
-            "Date": st.column_config.TextColumn("Date", help="YYYY-MM-DD"),
-            "Strike": st.column_config.NumberColumn(format="%.1f"),
-            "Open Price": st.column_config.NumberColumn(format="%.2f"),
-            "Close Price": st.column_config.NumberColumn(format="%.2f"),
-            "Commission": st.column_config.NumberColumn(format="$%.2f"),
-            "Premium": st.column_config.NumberColumn(format="$%.2f")
-        }
-    )
-
-    if not edt.equals(st.session_state.journal.drop(columns=['temp_dt'], errors='ignore')):
-        updated_df = refresh_calculations(edt)
-        st.session_state.journal = updated_df
-        save_journal(updated_df)
-        st.rerun()
-
-st.markdown(f'<div class="footer-right">Last Synced to GitHub: {st.session_state.last_update}</div>', unsafe_allow_html=True)
+            except Exception as e: st.error(f"Error: {e
