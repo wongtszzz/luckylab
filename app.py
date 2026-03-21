@@ -59,7 +59,6 @@ FILE_PATH = "lucky_ledger.csv"
 COLS = ["Date", "Ticker", "Type", "Strike", "Expiry", "Open Price", "Close Price", "Qty", "Commission", "Premium", "Status"]
 
 def sort_ledger(df):
-    """Custom Multi-Level Sort: 1. Date (Newest first) -> 2. Status (Open -> Win -> Loss)"""
     if df.empty: return df
     df['temp_date'] = pd.to_datetime(df['Date'], errors='coerce')
     
@@ -95,7 +94,6 @@ def load_journal():
         decoded_content = base64.b64decode(contents.content).decode('utf-8')
         df = pd.read_csv(io.StringIO(decoded_content))
         
-        # Data Migration: Fill missing columns
         for c in COLS:
             if c not in df.columns:
                 if c == "Date": df[c] = datetime.now().strftime("%Y-%m-%d")
@@ -107,7 +105,6 @@ def load_journal():
             st.error(f"⚠️ Emergency Stop: Could not connect to GitHub. Error: {e}")
             st.stop()
 
-# Schema Validation
 if 'journal' not in st.session_state or set(st.session_state.journal.columns) != set(COLS): 
     st.session_state.journal = load_journal()
     st.session_state.last_update = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -185,34 +182,36 @@ with tab2:
     r2c1.metric("Weekly Profit (7d) 📅", f"${weekly_profit:,.2f}", "Includes Realized + Unrealized", delta_color="off")
     r2c2.metric("Top Trade (7d) 🏆", best_str, worst_str, delta_color="off")
 
-    with st.expander("➕ Log New Trade"):
-        l1, l2, l3, l4 = st.columns(4)
-        
-        # PRO HACK: Set value=None for the Ticker so it starts perfectly blank
-        _raw_tk = l1.text_input("Ticker", value=None, placeholder="e.g. AAPL", key="new_tk")
-        # Only uppercase it if you actually typed something!
-        n_tk = _raw_tk.upper() if _raw_tk else None
-        
-        n_ex = l2.date_input("Expiry", datetime.now().date() + timedelta(days=7))
-        n_ty = l3.selectbox("Type", ["Short Put", "Short Call"])
-        n_qt = l4.number_input("Qty", value=1, min_value=1)
-        
-        l5, l6 = st.columns(2)
-        n_st = l5.number_input("Strike", value=None, format="%.1f", placeholder="e.g. 150.5")
-        n_op = l6.number_input("Open Price", value=None, format="%.2f", placeholder="e.g. 0.85")
-        
-        if st.button("🚀 Commit Trade", use_container_width=True, type="primary"):
-            if n_tk and n_st is not None and n_op is not None:
-                comm = round(n_qt * 1.05, 2)
-                net = round((float(n_op) * 100 * n_qt) - comm, 2)
-                stat = "Expired (Win)" if n_ex < datetime.now().date() else "Open / Active"
-                new_row = pd.DataFrame([{"Date": str(datetime.now().date()), "Ticker": n_tk, "Type": n_ty, "Strike": round(n_st, 1), "Expiry": str(n_ex), "Open Price": round(float(n_op), 2), "Close Price": 0.0, "Qty": n_qt, "Commission": comm, "Premium": net, "Status": stat}])
-                
-                st.session_state.journal = pd.concat([df_j.drop(columns=['temp_dt'], errors='ignore'), new_row], ignore_index=True)
-                save_journal(st.session_state.journal)
-                st.rerun()
-            else:
-                st.warning("⚠️ Please fill in the Ticker, Strike, and Open Price before committing.")
+    with st.expander("➕ Log New Trade", expanded=True):
+        # PRO HACK: We use st.form with clear_on_submit=True. This acts as an automatic delete button for everything!
+        with st.form("new_trade_form", clear_on_submit=True):
+            l1, l2, l3, l4 = st.columns(4)
+            
+            _raw_tk = l1.text_input("Ticker", placeholder="e.g. AAPL")
+            n_ex = l2.date_input("Expiry", datetime.now().date() + timedelta(days=7))
+            n_ty = l3.selectbox("Type", ["Short Put", "Short Call"])
+            n_qt = l4.number_input("Qty", value=1, min_value=1)
+            
+            l5, l6 = st.columns(2)
+            n_st = l5.number_input("Strike", value=None, format="%.1f", placeholder="e.g. 150.5")
+            n_op = l6.number_input("Open Price", value=None, format="%.2f", placeholder="e.g. 0.85")
+            
+            # Replaced st.button with st.form_submit_button
+            submitted = st.form_submit_button("🚀 Commit Trade", use_container_width=True, type="primary")
+            
+            if submitted:
+                n_tk = _raw_tk.upper() if _raw_tk else None
+                if n_tk and n_st is not None and n_op is not None:
+                    comm = round(n_qt * 1.05, 2)
+                    net = round((float(n_op) * 100 * n_qt) - comm, 2)
+                    stat = "Expired (Win)" if n_ex < datetime.now().date() else "Open / Active"
+                    new_row = pd.DataFrame([{"Date": str(datetime.now().date()), "Ticker": n_tk, "Type": n_ty, "Strike": round(n_st, 1), "Expiry": str(n_ex), "Open Price": round(float(n_op), 2), "Close Price": 0.0, "Qty": n_qt, "Commission": comm, "Premium": net, "Status": stat}])
+                    
+                    st.session_state.journal = pd.concat([df_j.drop(columns=['temp_dt'], errors='ignore'), new_row], ignore_index=True)
+                    save_journal(st.session_state.journal)
+                    st.rerun()
+                else:
+                    st.warning("⚠️ Please fill in the Ticker, Strike, and Open Price before committing.")
 
     st.write("### Trade History")
     
@@ -240,7 +239,7 @@ with tab2:
         st.session_state.journal.drop(columns=['temp_dt'], errors='ignore'), 
         num_rows="dynamic", 
         use_container_width=True, 
-        key="ledger_editor_v10",
+        key="ledger_editor_v11",
         column_config={
             "Date": st.column_config.TextColumn("Date", help="YYYY-MM-DD"),
             "Strike": st.column_config.NumberColumn(format="%.1f"),
