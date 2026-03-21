@@ -1,3 +1,3 @@
 Date,Ticker,Type,Strike,Expiry,Open Price,Close Price,Qty,Commission,Premium,Status
-2026-02-24,AVGO,Short Put,300.0,2026-02-27,0.95,0.0,1,1.05,93.95,Expired (Win)
+2026-02-27,AVGO,Short Put,300.0,2026-02-27,0.95,0.0,1,1.05,93.95,Expired (Win)
 2026-02-24,TSM,Short Put,345.0,2026-02-27,0.59,0.0,1,1.05,57.95,Expired (Win)
